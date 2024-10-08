@@ -5,6 +5,7 @@ import easyocr
 import cv2
 import json
 import time
+from typing import List
 
 # Initialize Modal
 app = modal.App("ocr_service")
@@ -33,40 +34,46 @@ reader = easyocr.Reader(['en'], gpu=True)  # Enable GPU
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
 
 @fastapi_app.post("/ocr")
-async def perform_ocr(file: UploadFile = File(..., description="File to process"), sample_rate: int = Body(1, embed=True)):
+async def perform_ocr(files: List[UploadFile] = File(..., description="List of files to process"), sample_rate: int = Body(1, embed=True)):
     try:
-        # Save uploaded file locally
-        file_path = f"/tmp/{file.filename}"
+        results_with_benchmark = []
         
-        # Check file size before saving
-        content = await file.read()
-        if len(content) > MAX_FILE_SIZE:
-            return {"error": "File size exceeds maximum limit of 100MB."}
-        
-        with open(file_path, "wb") as f:
-            f.write(content)
-        
-        # Start benchmark timer
-        start_time = time.time()
+        for file in files:
+            # Save uploaded file locally
+            file_path = f"/tmp/{file.filename}"
+            
+            # Check file size before saving
+            content = await file.read()
+            if len(content) > MAX_FILE_SIZE:
+                return {"error": f"File size of {file.filename} exceeds maximum limit of 100MB."}
+            
+            with open(file_path, "wb") as f:
+                f.write(content)
+            
+            # Start benchmark timer
+            start_time = time.time()
 
-        # Check if it's a video or an image
-        if file.filename.endswith(('.mp4', '.avi')):
-            result, frames_processed = process_video(file_path, sample_rate)
-        else:
-            result = process_image(file_path)
-            frames_processed = None
+            # Check if it's a video or an image
+            if file.filename.endswith(('.mp4', '.avi')):
+                result, frames_processed = process_video(file_path, sample_rate)
+            else:
+                result = process_image(file_path)
+                frames_processed = None
 
-        # End benchmark timer
-        end_time = time.time()
-        processing_time = end_time - start_time
+            # End benchmark timer
+            end_time = time.time()
+            processing_time = end_time - start_time
 
-        result_with_benchmark = {
-            "processing_time_seconds": processing_time,
-            "frames_processed": frames_processed,
-            "ocr_results": result
-        }
+            # Append result for each file
+            results_with_benchmark.append({
+                "file_name": file.filename,
+                "processing_time_seconds": processing_time,
+                "frames_processed": frames_processed,
+                "ocr_results": result
+            })
         
-        return json.dumps(result_with_benchmark)
+        return json.dumps(results_with_benchmark)
+    
     except Exception as e:
         print(f"Error during OCR processing: {e}")
         return {"error": "An internal server error occurred. Please check the logs for details."}
@@ -113,3 +120,4 @@ def format_results(results):
 @modal.asgi_app()
 def fastapi_modal_app():
     return fastapi_app
+
