@@ -5,9 +5,6 @@ import easyocr
 import cv2
 import time
 from typing import List
-import pytesseract
-import paddleocr
-import boto3
 
 # Global flag to control logging for the current request
 LOGGING_ENABLED = False  # Default value, can be overridden per request
@@ -17,7 +14,7 @@ app = modal.App("ocr_service")
 
 # Define the container image to include necessary dependencies and request a GPU
 image = modal.Image.debian_slim().pip_install(
-    "fastapi", "uvicorn", "easyocr", "opencv-python-headless", "torch", "paddleocr", "pytesseract"
+    "fastapi", "uvicorn", "easyocr", "opencv-python-headless", "torch"
 )
 
 # Create the FastAPI app and rename it to avoid conflict
@@ -35,14 +32,11 @@ fastapi_app.add_middleware(
 # Initialize the EasyOCR reader at the global scope and enable GPU (if available)
 reader = easyocr.Reader(['en'], gpu=True)  # Enable GPU
 
-# Initialize PaddleOCR
-paddle_reader = paddleocr.OCR(use_gpu=True)
-
 # Set the maximum file size limit (e.g., 100MB)
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
 
 # Available OCR models
-available_models = ["easyocr", "tesseract", "paddleocr", "aws_textract"]
+available_models = ["easyocr"]
 
 # Utility function to log messages
 def log_message(message: str):
@@ -113,42 +107,6 @@ def process_image(image_path, model_name):
     if model_name == "easyocr":
         results = reader.readtext(image_path)
         return format_results(results)
-
-    elif model_name == "tesseract":
-        image = cv2.imread(image_path)
-        data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
-        results = []
-        for i in range(len(data['text'])):
-            if int(data['conf'][i]) > 60:
-                bbox = [
-                    [data['left'][i], data['top'][i]],
-                    [data['left'][i] + data['width'][i], data['top'][i]],
-                    [data['left'][i] + data['width'][i], data['top'][i] + data['height'][i]],
-                    [data['left'][i], data['top'][i] + data['height'][i]]
-                ]
-                results.append({"text": data['text'][i], "bounding_box": bbox})
-        return results
-
-    elif model_name == "paddleocr":
-        results = paddle_reader.ocr(image_path)
-        return [{"text": line[1][0], "bounding_box": line[0]} for line in results]
-
-    elif model_name == "aws_textract":
-        client = boto3.client('textract')
-        with open(image_path, 'rb') as img_file:
-            response = client.detect_document_text(Document={'Bytes': img_file.read()})
-        
-        results = []
-        for block in response['Blocks']:
-            if block['BlockType'] == 'LINE':
-                bbox = [
-                    [block['Geometry']['BoundingBox']['Left'], block['Geometry']['BoundingBox']['Top']],
-                    [block['Geometry']['BoundingBox']['Left'] + block['Geometry']['BoundingBox']['Width'], block['Geometry']['BoundingBox']['Top']],
-                    [block['Geometry']['BoundingBox']['Left'] + block['Geometry']['BoundingBox']['Width'], block['Geometry']['BoundingBox']['Top'] + block['Geometry']['BoundingBox']['Height']],
-                    [block['Geometry']['BoundingBox']['Left'], block['Geometry']['BoundingBox']['Top'] + block['Geometry']['BoundingBox']['Height']]
-                ]
-                results.append({"text": block['Text'], "bounding_box": bbox})
-        return results
 
     else:
         raise ValueError(f"Unsupported OCR model: {model_name}")
